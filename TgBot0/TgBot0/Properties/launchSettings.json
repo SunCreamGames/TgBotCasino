@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "TgBot0": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "BotToken": "7279295318:AAHcfieqKztizoabFgnN7N71nCBZMBhguss"
+      }
+    }
+  }
+}
