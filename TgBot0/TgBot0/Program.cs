@@ -1,40 +1,45 @@
-﻿using Telegram.Bot;
+﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TgBot0;
 
 var botToken = Environment.GetEnvironmentVariable("BotToken");
 var botClient = new TelegramBotClient(botToken);
-var fileName = "casino121.txt";
-
 using CancellationTokenSource cts = new();
 
-var players = LoadSavedData();
+var chatsData = new Dictionary<long, ChatData>();
 
-Dictionary<long, int> LoadSavedData()
+var fileName = "casino121.txt";
+
+
+Dictionary<long, ChatData> LoadSavedData()
 {
-    var res = new Dictionary<long, int>();
-    var savedData = System.IO.File.ReadAllLines(fileName);
+    var json = System.IO.File.ReadAllText(fileName);
 
-    foreach (var item in savedData)
-    {
-        var parts = item.Split(':');
-        res[long.Parse(parts[0])] = int.Parse(parts[1]);
-    }
-
-    return res;
+    var data = JsonConvert.DeserializeObject<Dictionary<long, ChatData>>(json);
+    return data;
 }
 
-void SaveData(Dictionary<long, int> data)
+void SaveData(Dictionary<long, ChatData> dataForSave)
 {
-    System.IO.File.WriteAllLines(fileName, data.Select(x => $"{x.Key}:{x.Value}"));
+    var json = JsonConvert.SerializeObject(dataForSave, Formatting.Indented);
+
+    System.IO.File.WriteAllText(fileName, json);
 }
-// StartReceiving does not block the caller thread. Receiving is done on the ThreadPool.
+
+chatsData = new();
+var botCommands = await botClient.GetMyCommandsAsync();
+
 ReceiverOptions receiverOptions = new()
 {
-    AllowedUpdates = Array.Empty<UpdateType>() // receive all update types except ChatMember related updates
+    AllowedUpdates = Array.Empty<UpdateType>()
 };
 
 botClient.StartReceiving(
@@ -47,7 +52,7 @@ botClient.StartReceiving(
 while (true)
 {
     await Task.Delay(1000 * 60 * 10); // save every 10 minutes
-    SaveData(players);
+    SaveData(chatsData);
 }
 Console.ReadLine();
 cts.Cancel();
@@ -63,128 +68,36 @@ async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, Cancel
 
     var chatId = message.Chat.Id;
 
-    if (update.Message.Text == "/top_10")
-    {
-        List<KeyValuePair<long, int>> top;
-        if (players.Count <= 10)
-            top = players.OrderByDescending(x => x.Value).ToList();
-        else
-            top = players.OrderByDescending(x => x.Value).Take(10).ToList();
-        var res = "";
-        for (int i = 0; i < top.Count; i++)
-        {
-            var user = await botClient.GetChatMemberAsync(chatId, top[i].Key);
-            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {top[i].Value}\r\n";
-        }
-        await botClient.SendTextMessageAsync(chatId: chatId,
-                                                   text: res,
-                                                   replyToMessageId: update.Message.MessageId,
-                                                   cancellationToken: cancellationToken);
+    if (message.Chat.Type != ChatType.Group && message.Chat.Type != ChatType.Supergroup)
         return;
-    }
 
-    if (update.Message.Text == "/antitop_10")
-    {
-        List<KeyValuePair<long, int>> top;
-        if (players.Count <= 10)
-            top = players.OrderBy(x => x.Value).ToList();
-        else
-            top = players.OrderBy(x => x.Value).Take(10).ToList();
-        var res = "";
-        for (int i = 0; i < top.Count; i++)
+    if (!chatsData.TryGetValue(chatId, out var chatData))
+        chatData = new ChatData
         {
-            var user = await botClient.GetChatMemberAsync(chatId, top[i].Key);
-            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {top[i].Value}\r\n";
-        }
-        await botClient.SendTextMessageAsync(chatId: chatId,
-                                                   text: res,
-                                                   replyToMessageId: update.Message.MessageId,
-                                                   cancellationToken: cancellationToken);
-        return;
-    }
+            CasinoBalance = 0,
+            ChatId = chatId,
+            TopLosers = [],
+            TopWinners = [],
+            LoserTopEntryBound = int.MaxValue,
+            WinnerTopEntryBound = int.MinValue,
+            PlayerBalances = [],
+        };
 
-    if (update.Message.Text == "/get_balance")
-    {
+    chatsData[chatId] = chatData;
 
-        var getBalanceSuccess = players.TryGetValue(update.Message.From.Id, out int balance);
-        if (!getBalanceSuccess)
-        {
-            await botClient.SendTextMessageAsync(chatId: chatId,
-                                                       text: $"Spin at list 1 slot first, you are not in SSU ludomans database",
-                                                       replyToMessageId: update.Message.MessageId,
-                                                       cancellationToken: cancellationToken);
-            return;
-        }
-        await botClient.SendTextMessageAsync(chatId: chatId,
-                                                        text: $"Your balance is {balance}",
-                                                        replyToMessageId: update.Message.MessageId,
-                                                        cancellationToken: cancellationToken);
+    bool commandApplied = await TryApplyCommand(message, chatData, botClient, cancellationToken);
+    if (commandApplied)
         return;
-    }
+
+
     //Console.WriteLine($"Received a '{messageText}' message in chat {chatId}.");
     if (message.Dice == null)
         return;
     if (message.Dice.Emoji != "🎰")
         return;
 
-
-    var playerId = message.From.Id;
-
-    int playerBalance;
-
-    if (!players.ContainsKey(playerId))
-        playerBalance = 0;
-    else
-        playerBalance = players[playerId];
-
-
-
-    Console.WriteLine(message.Dice.Value);
-    var win = 0;
-    switch (message.Dice.Value)
-    {
-        case 64: // 777
-            win = 25;
-            break;
-        case 1:  // bar 
-            win = 20;
-            break;
-        case 43: // lemons
-            win = 10;
-            break;
-        case 22: // grapes
-            win = 5;
-            break;
-        default:
-            break;
-    }
-    if (win != 0)
-    {
-        await Task.Delay(1500);
-        playerBalance += win;
-        Message m = await botClient.SendTextMessageAsync(chatId: chatId,
-                                                         text: $"Hey hey hey, we have a winner here. You win {win} nihuya. Now you have {playerBalance} nihuya",
-                                                         replyToMessageId: update.Message.MessageId,
-                                                         cancellationToken: cancellationToken);
-
-        //var replyMarkup = new ReplyKeyboardMarkup(chatId, messageText);
-
-        //Message m = await botClient.SendTextMessageAsync(
-        //chatId: chatId,
-        //text: "Trying *all the parameters* of `sendMessage` method",
-        //parseMode: ParseMode.MarkdownV2,
-        //disableNotification: true,
-        //replyToMessageId: update.Message.MessageId,
-        //replyMarkup: new InlineKeyboardMarkup(
-        //    InlineKeyboardButton.WithPayment(
-        //        text: "Pay")),
-        //cancellationToken: cancellationToken);
-    }
-    else playerBalance--;
-
-    players[playerId] = playerBalance;
+    await TryApplyCasinoSpin(message, chatData, botClient, cancellationToken);
 }
-
 Task HandlePollingErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
 {
     var ErrorMessage = exception switch
@@ -200,3 +113,205 @@ Task HandlePollingErrorAsync(ITelegramBotClient botClient, Exception exception, 
 
 
 
+async Task TryApplyCasinoSpin(Message message, ChatData chatData, ITelegramBotClient botClient, CancellationToken cancellationToken)
+{
+
+    var playerId = message.From.Id;
+
+    if (!chatData.PlayerBalances.Any(x => x.UserId == playerId))
+        chatData.PlayerBalances.Add(new ChatPlayer
+        {
+            UserId = playerId,
+            ChatStats = new PlayerChatStatistic(playerId, chatData.ChatId)
+        });
+
+    var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+    if (playerData == null)
+        throw new Exception("Player is absent in chat data record");
+
+    var winPoints = -1;
+    switch (message.Dice.Value)
+    {
+        case 64: // 777
+            winPoints += 25;
+            break;
+        case 1:  // bar 
+            winPoints += 20;
+            break;
+        case 43: // lemons
+            winPoints += 10;
+            break;
+        case 22: // grapes
+            winPoints += 5;
+            break;
+        default:
+            break;
+    }
+    if (winPoints > 0)
+    {
+        await Task.Delay(1500);
+
+        playerData.ChatStats.TotalScore += winPoints;
+        playerData.ChatStats.SpinsWon++;
+        playerData.ChatStats.ScoreWon += winPoints;
+        Message m = await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
+                                                         text: $"Hey hey hey, we have a winner here. You have won {winPoints} nihuya. Now you have {playerData.ChatStats.TotalScore} nihuya",
+                                                         replyToMessageId: message.MessageId,
+                                                         cancellationToken: cancellationToken);
+    }
+    else
+    {
+        playerData.ChatStats.TotalScore += winPoints;
+        playerData.ChatStats.SpinsLost++;
+    }
+
+    await TopsUpdate(chatData, playerId);
+}
+
+async Task TopsUpdate(ChatData chatData, long playerId)
+{
+    var topsReworked = await Top10Update(chatData, playerId);
+    if (topsReworked)
+        return;
+
+    await AntiTop10Update(chatData, playerId);
+}
+
+async Task AntiTop10Update(ChatData chatData, long playerId)
+{
+    async Task<bool> Top10Update(ChatData chatData, long playerId)
+    {
+        var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+
+        if (playerData == null)
+            throw new Exception("Player is absent in chat data record");
+
+        var playerIsInAntiTopAlready = chatData.TopLosers.Any(x => x.UserId == playerId);
+
+        if (!playerIsInAntiTopAlready)
+        {
+            // player is not in anti-top, but should get into it after this spin
+            if (chatData.LoserTopEntryBound >= playerData.ChatStats.TotalScore)
+            {
+                await RecalulateRatings(chatData);
+                return true;
+            }
+        }
+
+        // player jumped over antitop-10 scoreline and probably should left antitop-10
+        if (chatData.LoserTopEntryBound <= playerData.ChatStats.TotalScore)
+        {
+            await RecalulateRatings(chatData);
+            return true;
+        }
+
+
+        // resort just top-10 plyers in case they changed some positions
+        chatData.TopLosers = chatData.TopWinners.OrderBy(x => x.ChatStats.TotalScore).ToList();
+        return false;
+    }
+}
+
+async Task<bool> Top10Update(ChatData chatData, long playerId)
+{
+    var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+
+    if (playerData == null)
+        throw new Exception("Player is absent in chat data record");
+
+    var playerIsInTopAlready = chatData.TopWinners.Any(x => x.UserId == playerId);
+
+    if (!playerIsInTopAlready)
+    {
+        // player is not in top, but should get into it after this spin
+        if (chatData.WinnerTopEntryBound <= playerData.ChatStats.TotalScore)
+        {
+            await RecalulateRatings(chatData);
+            return true;
+        }
+
+        // player is not in top, but his spin didn't affect this
+        return false;
+    }
+
+    // player dropped below top-10 scoreline and probably should left top-10
+    if (chatData.WinnerTopEntryBound >= playerData.ChatStats.TotalScore)
+    {
+        await RecalulateRatings(chatData);
+        return true;
+    }
+
+
+    // resort just top-10 plyers in case they changed some positions
+    chatData.TopWinners = chatData.TopWinners.OrderByDescending(x => x.ChatStats.TotalScore).ToList();
+    return false;
+}
+
+async Task RecalulateRatings(ChatData chatData)
+{
+    chatData.PlayerBalances = chatData.PlayerBalances.OrderByDescending(x => x.ChatStats.TotalScore).ToList();
+    chatData.TopWinners = chatData.PlayerBalances.Take(10).ToList();
+    chatData.TopLosers = chatData.PlayerBalances.TakeLast(10).ToList();
+    if (chatData.PlayerBalances.Count == 0)
+        return;
+
+    chatData.LoserTopEntryBound = chatData.TopLosers.LastOrDefault().ChatStats.TotalScore;
+    chatData.WinnerTopEntryBound = chatData.TopWinners.LastOrDefault().ChatStats.TotalScore;
+}
+
+async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBotClient botClient, CancellationToken cancellationToken)
+{
+    if (!botCommands.Any(x => x.Command == message.Text))
+        return false;
+
+
+    if (message.Text == "/top_10")
+    {
+        var res = "";
+        for (int i = 0; i < chatData.TopWinners.Count; i++)
+        {
+            var user = await botClient.GetChatMemberAsync(chatData.ChatId, chatData.TopWinners[i].UserId);
+            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopWinners[i].ChatStats.TotalScore}\r\n";
+        }
+        await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
+                                                   text: res,
+                                                   replyToMessageId: message.MessageId,
+                                                   cancellationToken: cancellationToken);
+        return true;
+    }
+
+    if (message.Text == "/antitop_10")
+    {
+        var res = "";
+        for (int i = 0; i < chatData.TopLosers.Count; i++)
+        {
+            var user = await botClient.GetChatMemberAsync(chatData.ChatId, chatData.TopLosers[i].UserId);
+            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopLosers[i].ChatStats.TotalScore}\r\n";
+        }
+        await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
+                                                   text: res,
+                                                   replyToMessageId: message.MessageId,
+                                                   cancellationToken: cancellationToken);
+        return true;
+    }
+
+    if (message.Text == "/get_balance")
+    {
+        var player = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == message.From.Id);
+        if (player == null)
+        {
+            await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
+                                                           text: $"Spin at list 1 slot first, you are not in SSU ludomans database",
+                                                           replyToMessageId: message.MessageId,
+                                                           cancellationToken: cancellationToken);
+            return true;
+        }
+        await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
+                                                                text: $"Your balance is {player.ChatStats.TotalScore}",
+                                                                replyToMessageId: message.MessageId,
+                                                                cancellationToken: cancellationToken);
+        return true;
+    }
+
+    return false;
+}
