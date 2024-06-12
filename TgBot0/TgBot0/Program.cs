@@ -1,4 +1,7 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -11,6 +14,16 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TgBot0;
 
 var botToken = Environment.GetEnvironmentVariable("BotToken");
+var serviceProvider = ConfigureServices();
+
+static IServiceProvider ConfigureServices()
+{
+    var connectionString = Environment.GetEnvironmentVariable("PostgresConnString");
+    var services = new ServiceCollection();
+    services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
+
+    return services.BuildServiceProvider();
+}
 var botClient = new TelegramBotClient(botToken);
 using CancellationTokenSource cts = new();
 
@@ -19,22 +32,33 @@ var chatsData = new Dictionary<long, ChatData>();
 var fileName = "casino121.txt";
 
 
-Dictionary<long, ChatData> LoadSavedData()
-{
-    var json = System.IO.File.ReadAllText(fileName);
+//Dictionary<long, ChatData> LoadSavedData()
+//{
+//    var json = System.IO.File.ReadAllText(fileName);
 
-    var data = JsonConvert.DeserializeObject<Dictionary<long, ChatData>>(json);
-    return data;
+//    var data = JsonConvert.DeserializeObject<Dictionary<long, ChatData>>(json);
+//    return data;
+//}
+
+//void SaveData(Dictionary<long, ChatData> dataForSave)
+//{
+//    var json = JsonConvert.SerializeObject(dataForSave, Formatting.Indented);
+
+//    System.IO.File.WriteAllText(fileName, json);
+//}
+
+chatsData = await LoadData();
+
+async Task<Dictionary<long, ChatData>> LoadData()
+{
+    using (var dbContext = serviceProvider.GetRequiredService<AppDbContext>())
+    {
+        var res = await dbContext.ChatStats.ToListAsync();
+
+
+    }
 }
 
-void SaveData(Dictionary<long, ChatData> dataForSave)
-{
-    var json = JsonConvert.SerializeObject(dataForSave, Formatting.Indented);
-
-    System.IO.File.WriteAllText(fileName, json);
-}
-
-chatsData = new();
 var botCommands = await botClient.GetMyCommandsAsync();
 
 ReceiverOptions receiverOptions = new()
@@ -49,11 +73,44 @@ botClient.StartReceiving(
     cancellationToken: cts.Token
 );
 
-while (true)
+
+StartSaveCron();
+
+async Task StartSaveCron()
 {
-    await Task.Delay(1000 * 60 * 10); // save every 10 minutes
-    SaveData(chatsData);
+
+    while (true)
+    {
+        await Task.Delay(1000 * 60 * 10); // save every 10 minutes
+        await SaveData(chatsData);
+    }
 }
+
+async Task SaveData(Dictionary<long, ChatData> chatsData)
+{
+    using (var dbContext = serviceProvider.GetRequiredService<AppDbContext>())
+    {
+        foreach (var chatData in chatsData)
+        {
+            var oldChatData = await dbContext.ChatStats.FindAsync(chatData.Key);
+            if (oldChatData == null)
+                dbContext.ChatStats.Add(chatData.Value);
+            else
+                oldChatData = chatData.Value;
+
+            foreach (var playerData in chatData.Value.PlayerBalances)
+            {
+                var oldPlayerData = await dbContext.ChatPlayerStats.FindAsync(playerData.UserId);
+
+                if (oldPlayerData == null)
+                    dbContext.Add(playerData);
+                else
+                    oldPlayerData = playerData.ChatStats;
+            }
+        }
+    }
+}
+
 Console.ReadLine();
 cts.Cancel();
 
