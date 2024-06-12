@@ -10,14 +10,14 @@ namespace TgBot0
     {
         public long ChatId { get; set; }
 
-        public List<ChatPlayer> TopWinners { get; set; }
+        public List<PlayerChatStatistic> TopWinners { get; set; }
         public int WinnerTopEntryBound { get; set; }
 
-        public List<ChatPlayer> TopLosers { get; set; }
+        public List<PlayerChatStatistic> TopLosers { get; set; }
         public int LoserTopEntryBound { get; set; }
 
         public int CasinoBalance { get; set; }
 
-        public List<ChatPlayer> PlayerBalances { get; set; }
+        public List<PlayerChatStatistic> PlayerStats { get; set; }
     }
 }

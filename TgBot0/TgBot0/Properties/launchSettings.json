@@ -3,7 +3,8 @@
     "TgBot0": {
       "commandName": "Project",
       "environmentVariables": {
-        "BotToken": "7279295318:AAHcfieqKztizoabFgnN7N71nCBZMBhguss"
+        "BotToken": "7279295318:AAHcfieqKztizoabFgnN7N71nCBZMBhguss",
+        "postgresConnString": "Host=localhost;Port=5432;Database=TgBotCasino;Username=postgres;Password=0000"
       }
     }
   }

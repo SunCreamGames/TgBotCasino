@@ -26,5 +26,7 @@ namespace TgBot0
         public int SpinsWon { get; set; }
         public int ScoreWon { get; set; }
         public int TotalScore { get; set; }
+
+        public virtual ChatData Chat { get; set; }
     }
 }

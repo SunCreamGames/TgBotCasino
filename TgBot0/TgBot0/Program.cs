@@ -18,7 +18,7 @@ var serviceProvider = ConfigureServices();
 
 static IServiceProvider ConfigureServices()
 {
-    var connectionString = Environment.GetEnvironmentVariable("PostgresConnString");
+    var connectionString = Environment.GetEnvironmentVariable("postgresConnString");
     var services = new ServiceCollection();
     services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 
@@ -51,12 +51,17 @@ chatsData = await LoadData();
 
 async Task<Dictionary<long, ChatData>> LoadData()
 {
+    var res = new Dictionary<long, ChatData>();
     using (var dbContext = serviceProvider.GetRequiredService<AppDbContext>())
     {
-        var res = await dbContext.ChatStats.ToListAsync();
-
-
+        var list = await dbContext.ChatStats.Include(x => x.PlayerStats).ToListAsync();
+        foreach (var chatData in list)
+        {
+            await RecalulateRatings(chatData);
+            res[chatData.ChatId] = chatData;
+        }
     }
+    return res;
 }
 
 var botCommands = await botClient.GetMyCommandsAsync();
@@ -98,14 +103,14 @@ async Task SaveData(Dictionary<long, ChatData> chatsData)
             else
                 oldChatData = chatData.Value;
 
-            foreach (var playerData in chatData.Value.PlayerBalances)
+            foreach (var playerData in chatData.Value.PlayerStats)
             {
                 var oldPlayerData = await dbContext.ChatPlayerStats.FindAsync(playerData.UserId);
 
                 if (oldPlayerData == null)
                     dbContext.Add(playerData);
                 else
-                    oldPlayerData = playerData.ChatStats;
+                    oldPlayerData = playerData;
             }
         }
     }
@@ -137,7 +142,7 @@ async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, Cancel
             TopWinners = [],
             LoserTopEntryBound = int.MaxValue,
             WinnerTopEntryBound = int.MinValue,
-            PlayerBalances = [],
+            PlayerStats = [],
         };
 
     chatsData[chatId] = chatData;
@@ -175,14 +180,10 @@ async Task TryApplyCasinoSpin(Message message, ChatData chatData, ITelegramBotCl
 
     var playerId = message.From.Id;
 
-    if (!chatData.PlayerBalances.Any(x => x.UserId == playerId))
-        chatData.PlayerBalances.Add(new ChatPlayer
-        {
-            UserId = playerId,
-            ChatStats = new PlayerChatStatistic(playerId, chatData.ChatId)
-        });
+    if (!chatData.PlayerStats.Any(x => x.UserId == playerId))
+        chatData.PlayerStats.Add(new PlayerChatStatistic(playerId, chatData.ChatId));
 
-    var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+    var playerData = chatData.PlayerStats.FirstOrDefault(x => x.UserId == playerId);
     if (playerData == null)
         throw new Exception("Player is absent in chat data record");
 
@@ -208,18 +209,18 @@ async Task TryApplyCasinoSpin(Message message, ChatData chatData, ITelegramBotCl
     {
         await Task.Delay(1500);
 
-        playerData.ChatStats.TotalScore += winPoints;
-        playerData.ChatStats.SpinsWon++;
-        playerData.ChatStats.ScoreWon += winPoints;
+        playerData.TotalScore += winPoints;
+        playerData.SpinsWon++;
+        playerData.ScoreWon += winPoints;
         Message m = await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
-                                                         text: $"Hey hey hey, we have a winner here. You have won {winPoints} nihuya. Now you have {playerData.ChatStats.TotalScore} nihuya",
+                                                         text: $"Hey hey hey, we have a winner here. You have won {winPoints} nihuya. Now you have {playerData.TotalScore} nihuya",
                                                          replyToMessageId: message.MessageId,
                                                          cancellationToken: cancellationToken);
     }
     else
     {
-        playerData.ChatStats.TotalScore += winPoints;
-        playerData.ChatStats.SpinsLost++;
+        playerData.TotalScore += winPoints;
+        playerData.SpinsLost++;
     }
 
     await TopsUpdate(chatData, playerId);
@@ -238,7 +239,7 @@ async Task AntiTop10Update(ChatData chatData, long playerId)
 {
     async Task<bool> Top10Update(ChatData chatData, long playerId)
     {
-        var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+        var playerData = chatData.PlayerStats.FirstOrDefault(x => x.UserId == playerId);
 
         if (playerData == null)
             throw new Exception("Player is absent in chat data record");
@@ -248,7 +249,7 @@ async Task AntiTop10Update(ChatData chatData, long playerId)
         if (!playerIsInAntiTopAlready)
         {
             // player is not in anti-top, but should get into it after this spin
-            if (chatData.LoserTopEntryBound >= playerData.ChatStats.TotalScore)
+            if (chatData.LoserTopEntryBound >= playerData.TotalScore)
             {
                 await RecalulateRatings(chatData);
                 return true;
@@ -256,7 +257,7 @@ async Task AntiTop10Update(ChatData chatData, long playerId)
         }
 
         // player jumped over antitop-10 scoreline and probably should left antitop-10
-        if (chatData.LoserTopEntryBound <= playerData.ChatStats.TotalScore)
+        if (chatData.LoserTopEntryBound <= playerData.TotalScore)
         {
             await RecalulateRatings(chatData);
             return true;
@@ -264,14 +265,14 @@ async Task AntiTop10Update(ChatData chatData, long playerId)
 
 
         // resort just top-10 plyers in case they changed some positions
-        chatData.TopLosers = chatData.TopWinners.OrderBy(x => x.ChatStats.TotalScore).ToList();
+        chatData.TopLosers = chatData.TopWinners.OrderBy(x => x.TotalScore).ToList();
         return false;
     }
 }
 
 async Task<bool> Top10Update(ChatData chatData, long playerId)
 {
-    var playerData = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == playerId);
+    var playerData = chatData.PlayerStats.FirstOrDefault(x => x.UserId == playerId);
 
     if (playerData == null)
         throw new Exception("Player is absent in chat data record");
@@ -281,7 +282,7 @@ async Task<bool> Top10Update(ChatData chatData, long playerId)
     if (!playerIsInTopAlready)
     {
         // player is not in top, but should get into it after this spin
-        if (chatData.WinnerTopEntryBound <= playerData.ChatStats.TotalScore)
+        if (chatData.WinnerTopEntryBound <= playerData.TotalScore)
         {
             await RecalulateRatings(chatData);
             return true;
@@ -292,7 +293,7 @@ async Task<bool> Top10Update(ChatData chatData, long playerId)
     }
 
     // player dropped below top-10 scoreline and probably should left top-10
-    if (chatData.WinnerTopEntryBound >= playerData.ChatStats.TotalScore)
+    if (chatData.WinnerTopEntryBound >= playerData.TotalScore)
     {
         await RecalulateRatings(chatData);
         return true;
@@ -300,20 +301,20 @@ async Task<bool> Top10Update(ChatData chatData, long playerId)
 
 
     // resort just top-10 plyers in case they changed some positions
-    chatData.TopWinners = chatData.TopWinners.OrderByDescending(x => x.ChatStats.TotalScore).ToList();
+    chatData.TopWinners = chatData.TopWinners.OrderByDescending(x => x.TotalScore).ToList();
     return false;
 }
 
 async Task RecalulateRatings(ChatData chatData)
 {
-    chatData.PlayerBalances = chatData.PlayerBalances.OrderByDescending(x => x.ChatStats.TotalScore).ToList();
-    chatData.TopWinners = chatData.PlayerBalances.Take(10).ToList();
-    chatData.TopLosers = chatData.PlayerBalances.TakeLast(10).ToList();
-    if (chatData.PlayerBalances.Count == 0)
+    chatData.PlayerStats = chatData.PlayerStats.OrderByDescending(x => x.TotalScore).ToList();
+    chatData.TopWinners = chatData.PlayerStats.Take(10).ToList();
+    chatData.TopLosers = chatData.PlayerStats.TakeLast(10).ToList();
+    if (chatData.PlayerStats.Count == 0)
         return;
 
-    chatData.LoserTopEntryBound = chatData.TopLosers.LastOrDefault().ChatStats.TotalScore;
-    chatData.WinnerTopEntryBound = chatData.TopWinners.LastOrDefault().ChatStats.TotalScore;
+    chatData.LoserTopEntryBound = chatData.TopLosers.LastOrDefault().TotalScore;
+    chatData.WinnerTopEntryBound = chatData.TopWinners.LastOrDefault().TotalScore;
 }
 
 async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBotClient botClient, CancellationToken cancellationToken)
@@ -328,7 +329,7 @@ async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBo
         for (int i = 0; i < chatData.TopWinners.Count; i++)
         {
             var user = await botClient.GetChatMemberAsync(chatData.ChatId, chatData.TopWinners[i].UserId);
-            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopWinners[i].ChatStats.TotalScore}\r\n";
+            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopWinners[i].TotalScore}\r\n";
         }
         await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
                                                    text: res,
@@ -343,7 +344,7 @@ async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBo
         for (int i = 0; i < chatData.TopLosers.Count; i++)
         {
             var user = await botClient.GetChatMemberAsync(chatData.ChatId, chatData.TopLosers[i].UserId);
-            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopLosers[i].ChatStats.TotalScore}\r\n";
+            res = res + $"{i + 1} : {user.User.FirstName} {user.User.LastName} — {chatData.TopLosers[i].TotalScore}\r\n";
         }
         await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
                                                    text: res,
@@ -354,7 +355,7 @@ async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBo
 
     if (message.Text == "/get_balance")
     {
-        var player = chatData.PlayerBalances.FirstOrDefault(x => x.UserId == message.From.Id);
+        var player = chatData.PlayerStats.FirstOrDefault(x => x.UserId == message.From.Id);
         if (player == null)
         {
             await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
@@ -364,7 +365,7 @@ async Task<bool> TryApplyCommand(Message message, ChatData chatData, ITelegramBo
             return true;
         }
         await botClient.SendTextMessageAsync(chatId: chatData.ChatId,
-                                                                text: $"Your balance is {player.ChatStats.TotalScore}",
+                                                                text: $"Your balance is {player.TotalScore}",
                                                                 replyToMessageId: message.MessageId,
                                                                 cancellationToken: cancellationToken);
         return true;
