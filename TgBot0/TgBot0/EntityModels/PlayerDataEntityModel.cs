@@ -12,6 +12,7 @@ namespace TgBot0.EntityModels
     {
         public void Configure(EntityTypeBuilder<PlayerChatStatistic> builder)
         {
+            builder.HasKey(x => new { x.ChatId, x.UserId });
             builder.HasOne(x => x.Chat).WithMany(chat => chat.PlayerStats).HasForeignKey(x => x.ChatId);
         }
     }

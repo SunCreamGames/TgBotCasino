@@ -18,6 +18,6 @@ namespace TgBot0
 
         public int CasinoBalance { get; set; }
 
-        public List<PlayerChatStatistic> PlayerStats { get; set; }
+        public virtual List<PlayerChatStatistic> PlayerStats { get; set; }
     }
 }

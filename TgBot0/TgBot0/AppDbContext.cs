@@ -13,7 +13,18 @@ namespace TgBot0
         {
 
         }
-
+        public AppDbContext()
+        {
+        }
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            builder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+        }
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            base.OnConfiguring(optionsBuilder);
+            optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=TgBotCasino;Username=postgres;Password=0000");
+        }
         public DbSet<PlayerChatStatistic> ChatPlayerStats { get; set; }
         public DbSet<ChatData> ChatStats { get; set; }
     }

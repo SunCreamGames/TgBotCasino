@@ -12,6 +12,7 @@ namespace TgBot0.EntityModels
     {
         public void Configure(EntityTypeBuilder<ChatData> builder)
         {
+            builder.HasKey(x => x.ChatId);
             builder.Ignore(x => x.TopWinners);
             builder.Ignore(x => x.TopLosers);
             builder.Ignore(x => x.LoserTopEntryBound);
