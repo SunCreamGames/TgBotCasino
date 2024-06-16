@@ -396,3 +396,5 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+/TgBot0/TgBot0/Properties/launchSettings.json
+/TgBot0/TgBot0/Properties/launchSettings.json
